@@ -25,7 +25,8 @@ section .text
         mov si, kernel_name ; kernel_name 주소를 SI 레지스터에 로드
         call load_kernel    ; kernel을 메모리에 로드하는 함수 호출
 
-        ; kernel 로드 후에 실행할 코드 추가 가능
+        ; kernel 실행
+        jmp 0x1000 ; 커널 이미지가 로드된 메모리 주소로 점프
 
     halt:   ; 부트로더 종료
         jmp halt
@@ -44,11 +45,11 @@ section .text
         int 0x13      ; 디스크 인터럽트 호출
         ret
 
-    section .data
+section .data
     ; "knix" 문자열 선언
     knix_msg db 'knix', 0
     ; kernel 파일 이름 선언
     kernel_name db 'KERNEL.ELF', 0
 
-    section .bss
+section .bss
     ; 사용되지 않은 메모리 공간
