@@ -1,0 +1,150 @@
+#include "ssd_fs.h"
+#include <string.h>
+#include <stdio.h>
+
+filesystem_t fs;
+
+void set_block_bitmap(uint32_t block, uint8_t value) {
+    uint32_t byte = block / 8;
+    uint32_t bit = block % 8;
+    if (value) {
+        fs.block_bitmap[byte] |= (1 << bit);
+    } else {
+        fs.block_bitmap[byte] &= ~(1 << bit);
+    }
+}
+
+int find_free_block() {
+    for (uint32_t i = 0; i < NUM_BLOCKS / 8; i++) {
+        if (fs.block_bitmap[i] != 0xFF) {
+            for (uint32_t j = 0; j < 8; j++) {
+                if (!(fs.block_bitmap[i] & (1 << j))) {
+                    return i * 8 + j;
+                }
+            }
+        }
+    }
+    return -1; // 사용 가능한 블록이 없음
+}
+
+int create_file(const char *filename, const uint8_t *data, uint32_t size) {
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (fs.files[i].filename[0] == '\0') { // 빈 파일 엔트리 찾기
+            strncpy(fs.files[i].filename, filename, FILENAME_LENGTH);
+            fs.files[i].size = size;
+            fs.files[i].is_directory = 0;
+
+            uint32_t blocks_needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            fs.files[i].start_block = find_free_block();
+            if (fs.files[i].start_block == -1) {
+                return -1; // 사용 가능한 블록이 없음
+            }
+
+            set_block_bitmap(fs.files[i].start_block, 1);
+
+            for (uint32_t j = 1; j < blocks_needed; j++) {
+                int next_block = find_free_block();
+                if (next_block == -1) {
+                    return -1; // 사용 가능한 블록이 없음
+                }
+                set_block_bitmap(next_block, 1);
+            }
+
+            write_ssd_data((uint64_t)fs.files[i].start_block * BLOCK_SIZE, data, size);
+            return 0;
+        }
+    }
+    return -1; // 파일 시스템에 빈 파일 엔트리가 없음
+}
+
+int read_file(const char *filename, uint8_t *buffer, uint32_t size) {
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (strncmp(fs.files[i].filename, filename, FILENAME_LENGTH) == 0 && !fs.files[i].is_directory) {
+            if (size > fs.files[i].size) {
+                size = fs.files[i].size;
+            }
+            read_ssd_data((uint64_t)fs.files[i].start_block * BLOCK_SIZE, buffer, size);
+            return size;
+        }
+    }
+    return -1; // 파일을 찾을 수 없음
+}
+
+int delete_file(const char *filename) {
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (strncmp(fs.files[i].filename, filename, FILENAME_LENGTH) == 0 && !fs.files[i].is_directory) {
+            set_block_bitmap(fs.files[i].start_block, 0);
+            fs.files[i].filename[0] = '\0'; // 파일 엔트리 비우기
+            return 0;
+        }
+    }
+    return -1; // 파일을 찾을 수 없음
+}
+
+int create_directory(const char *dirname) {
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (fs.files[i].filename[0] == '\0') { // 빈 파일 엔트리 찾기
+            strncpy(fs.files[i].filename, dirname, FILENAME_LENGTH);
+            fs.files[i].size = 0;
+            fs.files[i].is_directory = 1;
+            fs.files[i].start_block = find_free_block();
+            if (fs.files[i].start_block == -1) {
+                return -1; // 사용 가능한 블록이 없음
+            }
+            set_block_bitmap(fs.files[i].start_block, 1);
+            return 0;
+        }
+    }
+    return -1; // 디렉터리 생성 실패
+}
+
+int remove_directory(const char *dirname) {
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (strncmp(fs.files[i].filename, dirname, FILENAME_LENGTH) == 0 && fs.files[i].is_directory) {
+            set_block_bitmap(fs.files[i].start_block, 0);
+            fs.files[i].filename[0] = '\0'; // 디렉터리 엔트리 비우기
+            return 0;
+        }
+    }
+    return -1; // 디렉터리를 찾을 수 없음
+}
+
+int change_directory(const char *dirname) {
+    if (strcmp(dirname, "..") == 0) {
+        // 상위 디렉터리로 이동 (루트 디렉터리로 가정)
+        fs.current_directory = NULL;
+        return 0;
+    }
+
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (strncmp(fs.files[i].filename, dirname, FILENAME_LENGTH) == 0 && fs.files[i].is_directory) {
+            fs.current_directory = &fs.files[i];
+            return 0;
+        }
+    }
+    return -1; // 디렉터리를 찾을 수 없음
+}
+
+void list_files() {
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (fs.files[i].filename[0] != '\0') {
+            printf("%s%s\n", fs.files[i].filename, fs.files[i].is_directory ? "/" : "");
+        }
+    }
+}
+
+int execute_file(const char *filename) {
+    uint8_t buffer[1024];
+    int size = read_file(filename, buffer, sizeof(buffer));
+    if (size > 0) {
+        void (*func)() = (void (*)())buffer;
+        func(); // 읽은 바이너리 파일을 함수 포인터로 실행
+        return 0;
+    }
+    return -1; // 파일을 찾을 수 없거나 읽기 실패
+}
+
+void init_fs() {
+    memset(&fs, 0, sizeof(filesystem_t));
+    fs.current_directory = NULL;
+}
