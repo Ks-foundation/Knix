@@ -1,3 +1,4 @@
+#include "usb.h"
 #include "ssd_fs.h"
 #include <stdio.h>
 #include <string.h>
@@ -87,12 +88,29 @@ void kernel_main(void) {
     print_string("Initializing network...\n");
     init_network();
 
+    // USB 초기화
+    print_string("Initializing USB...\n");
+    uint8_t usb_buffer[512];
+
+    // USB에서 유틸리티 로드
+    uint32_t lba = 0;  // 로드할 LBA 주소 (예시)
+    read_usb_sector(lba, usb_buffer);
+
+    // USB에서 읽은 데이터 실행 (예: 유틸리티 프로그램)
+    void (*utility)() = (void (*)())usb_buffer;
+    utility();
+
     char command[100];
     while (1) {
         print_string("\n> ");
         read_input(command, sizeof(command));
 
-        if (strncmp(command, "create ", 7) == 0) {
+        if (strncmp(command, "exec_usb", 8) == 0) {
+            // USB에서 유틸리티 로드 및 실행
+            read_usb_sector(lba, usb_buffer);
+            utility = (void (*)())usb_buffer;
+            utility();
+        } else if (strncmp(command, "create ", 7) == 0) {
             char *filename = command + 7;
             const uint8_t data[] = "This is a test file.";
             if (create_file(filename, data, sizeof(data)) == 0) {
@@ -169,3 +187,14 @@ void kernel_main(void) {
         }
     }
 }
+
+void outb(uint16_t port, uint8_t val) {
+    __asm__ __volatile__("outb %0, %1" : : "a"(val), "dN"(port));
+}
+
+uint8_t inb(uint16_t port) {
+    uint8_t ret;
+    __asm__ __volatile__("inb %1, %0" : "=a"(ret) : "dN"(port));
+    return ret;
+}
+
