@@ -1,2 +1,2 @@
 # Knix
-an perfect os
+그냥 그저 구린 운영체제
